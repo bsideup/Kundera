@@ -16,13 +16,7 @@
 package com.impetus.client.mongodb;
 
 import java.lang.reflect.Field;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.Collection;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
+import java.util.*;
 
 import javax.persistence.PersistenceException;
 import javax.persistence.metamodel.Attribute;
@@ -158,9 +152,84 @@ public class DocumentObjectMapper
     }
 
     /**
+     *
+     * @param value
+     *            column value.
+     * @param javaType
+     *            field type.
+     */
+    static Object fromFieldValue(final Object value, Class javaType)
+    {
+        if (value == null)
+        {
+            return null;
+        }
+
+        AttributeType type = AttributeType.getType(javaType);
+        switch (type)
+        {
+        case MAP:
+            Map<?, ?> mapValues = ((BasicDBObject) value).toMap();
+            
+            Map mapResult = new HashMap();
+            
+            for(Map.Entry<?, ?> entry : mapValues.entrySet())
+            {
+                Object mapValue = entry.getValue();
+                mapResult.put(entry.getKey(), mapValue == null ? null : fromFieldValue(mapValue, mapValue.getClass()));
+            }
+            return mapResult;
+            
+        case SET:
+        case LIST:
+            Object[] collectionValues = ((BasicDBList) value).toArray();
+            Collection<Object> setResult = type == AttributeType.SET ? new HashSet<Object>() : new ArrayList<Object>();
+            
+            for(Object collectionValue : collectionValues)
+            {
+                setResult.add(collectionValue == null ? null : fromFieldValue(collectionValue, collectionValue.getClass()));
+            }
+            return setResult;
+        case POINT:
+            BasicDBList list = (BasicDBList) value;
+
+            Object xObj = list.get(0);
+            Object yObj = list.get(1);
+
+            if (xObj != null && yObj != null)
+            {
+                try
+                {
+                    double x = Double.parseDouble(xObj.toString());
+                    double y = Double.parseDouble(yObj.toString());
+
+                    return new Point(x, y);
+                }
+                catch (NumberFormatException e)
+                {
+                    log.error("Error while reading geolocation data; Reason - possible corrupt data, Caused by : .", e);
+                    throw new EntityReaderException("Error while reading geolocation data"
+                            + "; Reason - possible corrupt data.", e);
+                }
+            }
+            return null; //TODO
+        case ENUM:
+            EnumAccessor accessor = new EnumAccessor();
+            return accessor.fromString(javaType, value.toString());
+        case PRIMITIVE:
+            Object populatedValue = MongoDBUtils.populateValue(value, value.getClass());
+            return MongoDBUtils.getTranslatedObject(populatedValue, value.getClass(), javaType);
+        default:
+            return null; //TODO throw Exception
+        }
+    }
+
+
+
+    /**
      * Setter for column value, by default converted from string value, in case
      * of map it is automatically converted into map using BasicDBObject.
-     * 
+     *
      * @param document
      *            mongo document
      * @param entityObject
@@ -170,83 +239,71 @@ public class DocumentObjectMapper
      */
     static void setFieldValue(DBObject document, Object entityObject, Attribute column)
     {
-        Object value = null;
-
+        Object fieldValue = null;
         if (document != null)
         {
-            value = document.get(((AbstractAttribute) column).getJPAColumnName());
+            fieldValue = document.get(((AbstractAttribute) column).getJPAColumnName());
         }
-        if (value != null)
+
+        try
         {
             Class javaType = column.getJavaType();
-            try
+            Object value = fromFieldValue(fieldValue, javaType);
+            if(value != null)
             {
-                switch (AttributeType.getType(javaType))
-                {
-                case MAP:
-                    PropertyAccessorHelper.set(entityObject, (Field) column.getJavaMember(),
-                            ((BasicDBObject) value).toMap());
-                    break;
-                case SET:
-                    List collectionValues = Arrays.asList(((BasicDBList) value).toArray());
-                    PropertyAccessorHelper.set(entityObject, (Field) column.getJavaMember(), new HashSet(
-                            collectionValues));
-                    break;
-                case LIST:
-                    PropertyAccessorHelper.set(entityObject, (Field) column.getJavaMember(),
-                            Arrays.asList(((BasicDBList) value).toArray()));
-                    break;
-                case POINT:
-
-                    BasicDBList list = (BasicDBList) value;
-
-                    Object xObj = list.get(0);
-                    Object yObj = list.get(1);
-
-                    if (xObj != null && yObj != null)
-                    {
-                        try
-                        {
-                            double x = Double.parseDouble(xObj.toString());
-                            double y = Double.parseDouble(yObj.toString());
-
-                            Point point = new Point(x, y);
-                            PropertyAccessorHelper.set(entityObject, (Field) column.getJavaMember(), point);
-                        }
-                        catch (NumberFormatException e)
-                        {
-                            log.error(
-                                    "Error while reading geolocation data for column {} ; Reason - possible corrupt data, Caused by : .",
-                                    column, e);
-                            throw new EntityReaderException("Error while reading geolocation data for column " + column
-                                    + "; Reason - possible corrupt data.", e);
-                        }
-                    }
-                    break;
-                case ENUM:
-                    EnumAccessor accessor = new EnumAccessor();
-                    value = accessor.fromString(javaType, value.toString());
-                    PropertyAccessorHelper.set(entityObject, (Field) column.getJavaMember(), value);
-                    break;
-                case PRIMITIVE:
-                    value = MongoDBUtils.populateValue(value, value.getClass());
-                    value = MongoDBUtils.getTranslatedObject(value, value.getClass(), javaType);
-                    PropertyAccessorHelper.set(entityObject, (Field) column.getJavaMember(), value);
-                    break;
-                }
+                PropertyAccessorHelper.set(entityObject, (Field) column.getJavaMember(), value);
             }
-            catch (PropertyAccessException paex)
+        }
+        catch (PropertyAccessException paex)
+        {
+            log.error("Error while setting column {} value, caused by : .",
+                    ((AbstractAttribute) column).getJPAColumnName(), paex);
+            throw new PersistenceException(paex);
+        }
+    }
+
+    static Object convertToFieldValue(Object valueObject, Class javaType) throws PropertyAccessException
+    {
+        if (valueObject == null)
+        {
+            return null;
+        }
+        
+        switch (AttributeType.getType(javaType))
+        {
+        case MAP:
+            Map<?, ?> mapObj = (Map) valueObject;
+            BasicDBObjectBuilder builder = BasicDBObjectBuilder.start();
+            for (Map.Entry<?, ?> entry : mapObj.entrySet()) {
+                Object key = entry.getKey();
+                Object value = entry.getValue();
+                builder.add(MongoDBUtils.populateValue(key, key.getClass()).toString(), value == null ? null : convertToFieldValue(value, value.getClass()));
+            }
+
+            return builder.get();
+        case SET:
+        case LIST:
+            Collection collection = (Collection) valueObject;
+            BasicDBList basicDBList = new BasicDBList();
+            for (Object o : collection)
             {
-                log.error("Error while setting column {} value, caused by : .",
-                        ((AbstractAttribute) column).getJPAColumnName(), paex);
-                throw new PersistenceException(paex);
+                basicDBList.add(o == null ? null : convertToFieldValue(o, o.getClass()));
             }
+            return basicDBList;
+        case POINT:
+            Point p = (Point) valueObject;
+            return new double[] { p.getX(), p.getY() };
+        case ENUM:
+        case PRIMITIVE:
+            return MongoDBUtils.populateValue(valueObject, javaType);
+        default:
+            return null; //TODO throw Exception
         }
     }
 
     /**
      * Extract entity field.
-     * 
+     *
      * @param entity
      *            the entity
      * @param dbObj
@@ -258,42 +315,15 @@ public class DocumentObjectMapper
      */
     static void extractFieldValue(Object entity, DBObject dbObj, Attribute column) throws PropertyAccessException
     {
+        Object valueObject = PropertyAccessorHelper.getObject(entity, (Field) column.getJavaMember());
+        Class javaType = column.getJavaType();
+        
         try
         {
-            Object valueObject = PropertyAccessorHelper.getObject(entity, (Field) column.getJavaMember());
-
-            if (valueObject != null)
+            Object fieldValue = convertToFieldValue(valueObject, javaType);
+            if(fieldValue != null)
             {
-                Class javaType = column.getJavaType();
-                switch (AttributeType.getType(javaType))
-                {
-                case MAP:
-                    Map mapObj = (Map) valueObject;
-                    BasicDBObjectBuilder builder = BasicDBObjectBuilder.start(mapObj);
-                    dbObj.put(((AbstractAttribute) column).getJPAColumnName(), builder.get());
-                    break;
-                case SET:
-                case LIST:
-                    Collection collection = (Collection) valueObject;
-                    BasicDBList basicDBList = new BasicDBList();
-                    for (Object o : collection)
-                    {
-                        basicDBList.add(o);
-                    }
-                    dbObj.put(((AbstractAttribute) column).getJPAColumnName(), basicDBList);
-                    break;
-                case POINT:
-
-                    Point p = (Point) valueObject;
-                    double[] coordinate = new double[] { p.getX(), p.getY() };
-                    dbObj.put(((AbstractAttribute) column).getJPAColumnName(), coordinate);
-                    break;
-                case ENUM:
-                case PRIMITIVE:
-                    dbObj.put(((AbstractAttribute) column).getJPAColumnName(),
-                            MongoDBUtils.populateValue(valueObject, javaType));
-                    break;
-                }
+                dbObj.put(((AbstractAttribute) column).getJPAColumnName(), fieldValue);
             }
         }
         catch (PropertyAccessException paex)
