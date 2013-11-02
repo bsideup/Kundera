@@ -73,13 +73,21 @@ public class DocumentObjectMapper
             {
                 try
                 {
-                    if (metaModel.isEmbeddable(((AbstractAttribute) column).getBindableJavaType()))
+                    AbstractAttribute attribute = (AbstractAttribute) column;
+                    Object valueObject = PropertyAccessorHelper.getObject(obj, (Field) column.getJavaMember());
+                    Object value = null;
+                    if (metaModel.isEmbeddable(attribute.getBindableJavaType()))
                     {
-                        onEmbeddable((AbstractAttribute) column, obj, metaModel, dBObj);
+                        value = getEmbeddedValue(attribute, valueObject, metaModel);
                     }
-                    else if (!column.isAssociation())
+                    else if (!attribute.isAssociation())
                     {
-                        extractFieldValue(obj, dBObj, column);
+                        value = convertToFieldValue(valueObject, column.getJavaType());
+                    }
+                    
+                    if (value != null)
+                    {
+                        dBObj.put(attribute.getJPAColumnName(), value);
                     }
                 }
                 catch (PropertyAccessException paex)
@@ -89,31 +97,6 @@ public class DocumentObjectMapper
             }
         }
         return dBObj;
-    }
-
-    /**
-     * Creates a MongoDB document list from a given java collection. columns in
-     * the document correspond Columns provided as List.
-     * 
-     * @param coll
-     *            the coll
-     * @param columns
-     *            the columns
-     * @return the document list from collection
-     * @throws PropertyAccessException
-     *             the property access exception
-     */
-    static BasicDBObject[] getDocumentListFromCollection(Metamodel metaModel, Collection coll, Set<Attribute> columns)
-            throws PropertyAccessException
-    {
-        BasicDBObject[] dBObjects = new BasicDBObject[coll.size()];
-        int count = 0;
-        for (Object o : coll)
-        {
-            dBObjects[count] = getDocumentFromObject((MetamodelImpl) metaModel, o, columns, null);
-            count++;
-        }
-        return dBObjects;
     }
 
     /**
@@ -140,13 +123,45 @@ public class DocumentObjectMapper
             {
                 if (!column.equals(idAttribute))
                 {
-                    if (metamodel.isEmbeddable(((AbstractAttribute) column).getBindableJavaType()))
+                    final AbstractAttribute attribute = (AbstractAttribute) column;
+                    final Field field = (Field) column.getJavaMember();
+                    final Class bindableJavaType = attribute.getBindableJavaType();
+                    final Object fieldValue = documentObj.get(attribute.getJPAColumnName());
+                    Object value = null;
+                    
+                    if (metamodel.isEmbeddable(bindableJavaType))
                     {
-                        onViaEmbeddable(column, entity, metamodel, documentObj);
+                        EmbeddableType embeddable = metamodel.embeddable(bindableJavaType);
+                        if (column.isCollection())
+                        {
+                            Class embeddedObjectClass = PropertyAccessorHelper.getGenericClass(field);
+
+                            value = getCollectionFromDocumentList(metamodel, (BasicDBList) fieldValue,
+                                    field.getType(), embeddedObjectClass, embeddable.getAttributes());
+                        }
+                        else
+                        {
+                            value = getObjectFromDocument(metamodel, (BasicDBObject) fieldValue,
+                                    bindableJavaType, embeddable.getAttributes(), null);
+                        }
                     }
                     else if (!column.isAssociation())
                     {
-                        setFieldValue(documentObj, entity, column);
+                        value = fromFieldValue(fieldValue, column.getJavaType());
+                    }
+
+                    try
+                    {
+                        if(value != null)
+                        {
+                            PropertyAccessorHelper.set(entity, field, value);
+                        }
+                    }
+                    catch (PropertyAccessException paex)
+                    {
+                        log.error("Error while setting column {} value, caused by : .",
+                                ((AbstractAttribute) column).getJPAColumnName(), paex);
+                        throw new PersistenceException(paex);
                     }
                 }
             }
@@ -162,57 +177,9 @@ public class DocumentObjectMapper
         }
     }
 
-    /**
-     * @param column
-     * @param entity
-     * @param document
-     */
-    static void onViaEmbeddable(Attribute column, Object entity, Metamodel metamodel, DBObject document)
-    {
-        AbstractAttribute attribute = (AbstractAttribute) column;
-        EmbeddableType embeddable = metamodel.embeddable(attribute.getBindableJavaType());
-        Field embeddedField = (Field) column.getJavaMember();
-        Object embeddedDocumentObject = document.get(attribute.getJPAColumnName());
-        Object result = null;
-        if (column.isCollection())
-        {
-            Class embeddedObjectClass = PropertyAccessorHelper.getGenericClass(embeddedField);
-
-            Collection embeddedCollection = DocumentObjectMapper.getCollectionFromDocumentList(metamodel,
-                    (BasicDBList) embeddedDocumentObject, embeddedField.getType(), embeddedObjectClass,
-                    embeddable.getAttributes());
-            result = embeddedCollection;
-        }
-        else
-        {
-            result = DocumentObjectMapper.getObjectFromDocument((MetamodelImpl) metamodel,
-                    (BasicDBObject) embeddedDocumentObject, attribute.getBindableJavaType(),
-                    embeddable.getAttributes(), null);
-        }
-        PropertyAccessorHelper.set(entity, embeddedField, result);
-    }
-
-    /**
-     * @param column
-     * @param entity
-     */
-    static void onEmbeddable(/* EntityType entityType, */AbstractAttribute column, /*
-                                                                         * EntityMetadata
-                                                                         * m,
-                                                                         */Object entity, Metamodel metaModel,
-                      DBObject dbObj)
-    {
-        Object value = getEmbeddedValue(column, entity, metaModel);
-        if (value != null)
-        {
-            dbObj.put(column.getJPAColumnName(), value);
-        }
-    }
-
-    static Object getEmbeddedValue(AbstractAttribute column, Object entity, Metamodel metaModel)
+    static Object getEmbeddedValue(AbstractAttribute column, Object embeddedObject, MetamodelImpl metaModel)
     {
         EmbeddableType embeddableType = metaModel.embeddable(column.getBindableJavaType());
-        Object embeddedObject = PropertyAccessorHelper.getObject(entity, (Field) column.getJavaMember());
         Object value = null;
 
         if(embeddedObject != null)
@@ -222,11 +189,18 @@ public class DocumentObjectMapper
                 Collection embeddedCollection = (Collection) embeddedObject;
                 // means it is case of element collection
 
-                value = getDocumentListFromCollection(metaModel, embeddedCollection, embeddableType.getAttributes());
+                BasicDBObject[] dBObjects = new BasicDBObject[embeddedCollection.size()];
+                int count = 0;
+                for (Object o : embeddedCollection)
+                {
+                    dBObjects[count] = getDocumentFromObject(metaModel, o, embeddableType.getAttributes(), null);
+                    count++;
+                }
+                value = dBObjects;
             }
             else
             {
-                value = getDocumentFromObject((MetamodelImpl) metaModel, embeddedObject, embeddableType.getAttributes(), null);
+                value = getDocumentFromObject(metaModel, embeddedObject, embeddableType.getAttributes(), null);
             }
         }
 
@@ -308,43 +282,6 @@ public class DocumentObjectMapper
     }
 
 
-
-    /**
-     * Setter for column value, by default converted from string value, in case
-     * of map it is automatically converted into map using BasicDBObject.
-     *
-     * @param document
-     *            mongo document
-     * @param entityObject
-     *            searched entity.
-     * @param column
-     *            column field.
-     */
-    static void setFieldValue(DBObject document, Object entityObject, Attribute column)
-    {
-        Object fieldValue = null;
-        if (document != null)
-        {
-            fieldValue = document.get(((AbstractAttribute) column).getJPAColumnName());
-        }
-
-        try
-        {
-            Class javaType = column.getJavaType();
-            Object value = fromFieldValue(fieldValue, javaType);
-            if(value != null)
-            {
-                PropertyAccessorHelper.set(entityObject, (Field) column.getJavaMember(), value);
-            }
-        }
-        catch (PropertyAccessException paex)
-        {
-            log.error("Error while setting column {} value, caused by : .",
-                    ((AbstractAttribute) column).getJPAColumnName(), paex);
-            throw new PersistenceException(paex);
-        }
-    }
-
     static Object convertToFieldValue(Object valueObject, Class javaType) throws PropertyAccessException
     {
         if (valueObject == null)
@@ -381,39 +318,6 @@ public class DocumentObjectMapper
             return MongoDBUtils.populateValue(valueObject, javaType);
         default:
             return null; //TODO throw Exception
-        }
-    }
-
-    /**
-     * Extract entity field.
-     *
-     * @param entity
-     *            the entity
-     * @param dbObj
-     *            the db obj
-     * @param column
-     *            the column
-     * @throws PropertyAccessException
-     *             the property access exception
-     */
-    static void extractFieldValue(Object entity, DBObject dbObj, Attribute column) throws PropertyAccessException
-    {
-        Object valueObject = PropertyAccessorHelper.getObject(entity, (Field) column.getJavaMember());
-        Class javaType = column.getJavaType();
-        
-        try
-        {
-            Object fieldValue = convertToFieldValue(valueObject, javaType);
-            if(fieldValue != null)
-            {
-                dbObj.put(((AbstractAttribute) column).getJPAColumnName(), fieldValue);
-            }
-        }
-        catch (PropertyAccessException paex)
-        {
-            log.error("Error while getting column {} value, caused by : .",
-                    ((AbstractAttribute) column).getJPAColumnName(), paex);
-            throw new PersistenceException(paex);
         }
     }
 
