@@ -84,52 +84,48 @@ public final class MongoDBDataHandler
             MetamodelImpl metamodel = (MetamodelImpl) KunderaMetadata.INSTANCE.getApplicationMetadata().getMetamodel(
                     m.getPersistenceUnit());
             Map<String, Object> relationValue = null;
+            EntityType entityType = metamodel.entity(entityClass);
 
             // Populate entity columns
             // List<Column> columns = m.getColumnsAsList();
-            EntityType entityType = metamodel.entity(entityClass);
-
             Set<Attribute> columns = entityType.getAttributes();
 
             SingularAttribute idAttribute = m.getIdAttribute();
 
             entity = DocumentObjectMapper.getObjectFromDocument(metamodel, document, entityClass, columns, idAttribute);
 
-            for (Attribute column : columns)
+            if(relations != null)
             {
-                if (!column.equals(idAttribute))
+                for (Attribute column : columns)
                 {
-                    String fieldName = ((AbstractAttribute) column).getJPAColumnName();
-
-                    Class javaType = ((AbstractAttribute) column).getBindableJavaType();
-                    if (metamodel.isEmbeddable(javaType))
+                    if (!column.equals(idAttribute))
                     {
-                    }
-                    else if (!column.isAssociation())
-                    {
-                    }
-                    else if (relations != null)
-                    {
-                        if (relationValue == null)
+                        String fieldName = ((AbstractAttribute) column).getJPAColumnName();
+    
+                        Class javaType = ((AbstractAttribute) column).getBindableJavaType();
+                        if (column.isAssociation() && !metamodel.isEmbeddable(javaType))
                         {
-                            relationValue = new HashMap<String, Object>();
-                        }
-
-                        if (relations.contains(fieldName)
-                                && !fieldName.equals(((AbstractAttribute) idAttribute).getJPAColumnName()))
-                        {
-                            Object colValue = document.get(fieldName);
-                            if (colValue != null)
+                            if (relationValue == null)
                             {
-                                String colFieldName = m.getFieldName(fieldName);
-                                Attribute attribute = colFieldName != null ? entityType.getAttribute(colFieldName)
-                                        : null;
-                                EntityMetadata relationMetadata = KunderaMetadataManager.getEntityMetadata(attribute
-                                        .getJavaType());
-                                colValue = MongoDBUtils.getTranslatedObject(colValue, colValue.getClass(),
-                                        relationMetadata.getIdAttribute().getJavaType());
+                                relationValue = new HashMap<String, Object>();
                             }
-                            relationValue.put(fieldName, colValue);
+    
+                            if (relations.contains(fieldName)
+                                    && !fieldName.equals(((AbstractAttribute) idAttribute).getJPAColumnName()))
+                            {
+                                Object colValue = document.get(fieldName);
+                                if (colValue != null)
+                                {
+                                    String colFieldName = m.getFieldName(fieldName);
+                                    Attribute attribute = colFieldName != null ? entityType.getAttribute(colFieldName)
+                                            : null;
+                                    EntityMetadata relationMetadata = KunderaMetadataManager.getEntityMetadata(attribute
+                                            .getJavaType());
+                                    colValue = MongoDBUtils.getTranslatedObject(colValue, colValue.getClass(),
+                                            relationMetadata.getIdAttribute().getJavaType());
+                                }
+                                relationValue.put(fieldName, colValue);
+                            }
                         }
                     }
                 }
