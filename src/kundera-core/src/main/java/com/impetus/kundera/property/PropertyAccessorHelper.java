@@ -15,10 +15,7 @@
  ******************************************************************************/
 package com.impetus.kundera.property;
 
-import java.lang.reflect.Array;
-import java.lang.reflect.Field;
-import java.lang.reflect.GenericArrayType;
-import java.lang.reflect.Type;
+import java.lang.reflect.*;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashSet;
@@ -444,6 +441,19 @@ public class PropertyAccessorHelper
 
         }
 
+        return genericClasses;
+    }
+    
+    public static List<Class<?>> getGenericClasses(Class clazz)
+    {
+        ParameterizedType genericSuperclass = (ParameterizedType) clazz.getGenericSuperclass();
+
+        List<Class<?>> genericClasses = new ArrayList<Class<?>>();
+
+        for (Type parameter : genericSuperclass.getActualTypeArguments())
+        {
+            genericClasses.add(toClass(parameter));    
+        }
         return genericClasses;
     }
 

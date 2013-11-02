@@ -659,8 +659,7 @@ public class MongoDBClient extends ClientBase implements Client<MongoDBQuery>, B
         persistenceUnit = metadata.getPersistenceUnit();
         String documentName = metadata.getTableName();
         DBObject document = null;
-        document = new BasicDBObject();
-        document = handler.getDocumentFromEntity(document, metadata, entity, relationHolders);
+        document = handler.getDocumentFromEntity(metadata, entity, relationHolders);
 
         if (isUpdate)
         {
