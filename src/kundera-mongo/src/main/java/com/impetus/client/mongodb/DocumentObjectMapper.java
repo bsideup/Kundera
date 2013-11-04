@@ -62,7 +62,7 @@ public class DocumentObjectMapper
      * @throws PropertyAccessException
      *             the property access exception
      */
-    static BasicDBObject getDocumentFromObject(MetamodelImpl metaModel, Object obj, Set<Attribute> columns, Attribute idAttribute)
+    static DBObject getDocumentFromObject(MetamodelImpl metaModel, Object obj, Set<Attribute> columns, Attribute idAttribute)
             throws PropertyAccessException
     {
         BasicDBObject dBObj = new BasicDBObject();
@@ -74,15 +74,16 @@ public class DocumentObjectMapper
                 try
                 {
                     AbstractAttribute attribute = (AbstractAttribute) column;
-                    Object valueObject = PropertyAccessorHelper.getObject(obj, (Field) column.getJavaMember());
+                    Field field = (Field) column.getJavaMember();
+                    Object valueObject = PropertyAccessorHelper.getObject(obj, field);
                     Object value = null;
                     if (metaModel.isEmbeddable(attribute.getBindableJavaType()))
                     {
-                        value = getEmbeddedValue(attribute, valueObject, metaModel);
+                        value = toEmbeddedValue(attribute, valueObject, metaModel);
                     }
                     else if (!attribute.isAssociation())
                     {
-                        value = convertToFieldValue(valueObject, column.getJavaType());
+                        value = toFieldValue(column.getJavaType(), valueObject);
                     }
                     
                     if (value != null)
@@ -97,6 +98,79 @@ public class DocumentObjectMapper
             }
         }
         return dBObj;
+    }
+
+
+    static Object toFieldValue(Class javaType, Object valueObject) throws PropertyAccessException
+    {
+        if (valueObject == null)
+        {
+            return null;
+        }
+        
+        switch (AttributeType.getType(javaType))
+        {
+            case MAP:
+                Map<?, ?> mapObj = (Map) valueObject;
+                
+                BasicDBObjectBuilder builder = BasicDBObjectBuilder.start();
+                for (Map.Entry<?, ?> entry : mapObj.entrySet()) {
+                    Object key = entry.getKey();
+                    Object value = entry.getValue();
+                    builder.add(MongoDBUtils.populateValue(key, key.getClass()).toString(), toFieldValue(value != null ? value.getClass() : null, value));
+                }
+
+                return builder.get();
+            case SET:
+            case LIST:
+                Collection collection = (Collection) valueObject;
+                
+                BasicDBList basicDBList = new BasicDBList();
+                for (Object o : collection)
+                {
+                    basicDBList.add(toFieldValue(o != null ? o.getClass() : null, o));
+                }
+                return basicDBList;
+            case POINT:
+                Point p = (Point) valueObject;
+                return new double[] { p.getX(), p.getY() };
+            case ENUM:
+            case PRIMITIVE:
+                return MongoDBUtils.populateValue(valueObject, javaType);
+            default:
+                return null; //TODO throw Exception
+        }
+    }
+
+    static Object toEmbeddedValue(AbstractAttribute column, Object embeddedObject, MetamodelImpl metaModel)
+    {
+        EmbeddableType embeddableType = metaModel.embeddable(column.getBindableJavaType());
+        Object value = null;
+
+        if(embeddedObject != null)
+        {
+            if (column.isCollection())
+            {
+                Collection embeddedCollection = (Collection) embeddedObject;
+                // means it is case of element collection
+
+                DBObject[] dBObjects = new BasicDBObject[embeddedCollection.size()];
+                int count = 0;
+                for (Object o : embeddedCollection)
+                {
+                    dBObjects[count] = getDocumentFromObject(metaModel, o, embeddableType.getAttributes(), null);
+                    count++;
+                }
+                value = dBObjects;
+            }
+            else
+            {
+                value = getDocumentFromObject(metaModel, embeddedObject, embeddableType.getAttributes(), null);
+            }
+        }
+
+        return value;
+
     }
 
     /**
@@ -136,7 +210,7 @@ public class DocumentObjectMapper
                         {
                             Class embeddedObjectClass = PropertyAccessorHelper.getGenericClass(field);
 
-                            value = getCollectionFromDocumentList(metamodel, (BasicDBList) fieldValue,
+                            value = fromEmbeddedCollection(metamodel, (BasicDBList) fieldValue,
                                     field.getType(), embeddedObjectClass, embeddable.getAttributes());
                         }
                         else
@@ -175,37 +249,6 @@ public class DocumentObjectMapper
         {
             throw new PersistenceException(e);
         }
-    }
-
-    static Object getEmbeddedValue(AbstractAttribute column, Object embeddedObject, MetamodelImpl metaModel)
-    {
-        EmbeddableType embeddableType = metaModel.embeddable(column.getBindableJavaType());
-        Object value = null;
-
-        if(embeddedObject != null)
-        {
-            if (column.isCollection())
-            {
-                Collection embeddedCollection = (Collection) embeddedObject;
-                // means it is case of element collection
-
-                BasicDBObject[] dBObjects = new BasicDBObject[embeddedCollection.size()];
-                int count = 0;
-                for (Object o : embeddedCollection)
-                {
-                    dBObjects[count] = getDocumentFromObject(metaModel, o, embeddableType.getAttributes(), null);
-                    count++;
-                }
-                value = dBObjects;
-            }
-            else
-            {
-                value = getDocumentFromObject(metaModel, embeddedObject, embeddableType.getAttributes(), null);
-            }
-        }
-
-        return value;
-
     }
 
     /**
@@ -281,52 +324,12 @@ public class DocumentObjectMapper
         }
     }
 
-
-    static Object convertToFieldValue(Object valueObject, Class javaType) throws PropertyAccessException
-    {
-        if (valueObject == null)
-        {
-            return null;
-        }
-        
-        switch (AttributeType.getType(javaType))
-        {
-        case MAP:
-            Map<?, ?> mapObj = (Map) valueObject;
-            BasicDBObjectBuilder builder = BasicDBObjectBuilder.start();
-            for (Map.Entry<?, ?> entry : mapObj.entrySet()) {
-                Object key = entry.getKey();
-                Object value = entry.getValue();
-                builder.add(MongoDBUtils.populateValue(key, key.getClass()).toString(), value == null ? null : convertToFieldValue(value, value.getClass()));
-            }
-
-            return builder.get();
-        case SET:
-        case LIST:
-            Collection collection = (Collection) valueObject;
-            BasicDBList basicDBList = new BasicDBList();
-            for (Object o : collection)
-            {
-                basicDBList.add(o == null ? null : convertToFieldValue(o, o.getClass()));
-            }
-            return basicDBList;
-        case POINT:
-            Point p = (Point) valueObject;
-            return new double[] { p.getX(), p.getY() };
-        case ENUM:
-        case PRIMITIVE:
-            return MongoDBUtils.populateValue(valueObject, javaType);
-        default:
-            return null; //TODO throw Exception
-        }
-    }
-
     /**
      * Creates a collection of <code>embeddedObjectClass</code> instances
      * wherein each element is java object representation of MongoDB document
      * object contained in <code>documentList</code>. Field names are determined
      * from <code>columns</code>.
-     * 
+     *
      * @param documentList
      *            the document list
      * @param embeddedCollectionClass
@@ -338,8 +341,8 @@ public class DocumentObjectMapper
      * @param metamodel
      * @return the collection from document list
      */
-    static Collection<?> getCollectionFromDocumentList(Metamodel metamodel, BasicDBList documentList,
-            Class embeddedCollectionClass, Class embeddedObjectClass, Set<Attribute> columns)
+    static Collection<?> fromEmbeddedCollection(Metamodel metamodel, BasicDBList documentList,
+                                                Class embeddedCollectionClass, Class embeddedObjectClass, Set<Attribute> columns)
     {
         Collection<Object> embeddedCollection = null;
         if (embeddedCollectionClass.equals(Set.class))
@@ -364,4 +367,5 @@ public class DocumentObjectMapper
 
         return embeddedCollection;
     }
+
 }

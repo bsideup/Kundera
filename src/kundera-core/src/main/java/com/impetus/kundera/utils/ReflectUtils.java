@@ -79,15 +79,27 @@ public class ReflectUtils
 
     /**
      * Gets the type arguments.
-     * 
+     *
      * @param property
      *            the property
-     * 
+     *
      * @return the type arguments
      */
     public static Type[] getTypeArguments(Field property)
     {
-        Type type = property.getGenericType();
+        return getTypeArguments(property.getGenericType());
+    }
+
+    /**
+     * Gets the type arguments.
+     *
+     * @param type
+     *            the type
+     *
+     * @return the type arguments
+     */
+    public static Type[] getTypeArguments(Type type)
+    {
         if (type instanceof ParameterizedType)
         {
             return ((ParameterizedType) type).getActualTypeArguments();

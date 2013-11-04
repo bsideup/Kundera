@@ -16,11 +16,7 @@
 package com.impetus.kundera.property;
 
 import java.lang.reflect.*;
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Set;
+import java.util.*;
 
 import com.impetus.kundera.client.EnhanceEntity;
 import com.impetus.kundera.metadata.model.EntityMetadata;
@@ -446,11 +442,15 @@ public class PropertyAccessorHelper
     
     public static List<Class<?>> getGenericClasses(Class clazz)
     {
-        ParameterizedType genericSuperclass = (ParameterizedType) clazz.getGenericSuperclass();
-
         List<Class<?>> genericClasses = new ArrayList<Class<?>>();
+        
+        Type[] genericTypes = ReflectUtils.getTypeArguments(clazz.getGenericSuperclass()); 
+        
+        if(genericTypes == null) {
+            return genericClasses;
+        }
 
-        for (Type parameter : genericSuperclass.getActualTypeArguments())
+        for (Type parameter : genericTypes)
         {
             genericClasses.add(toClass(parameter));    
         }

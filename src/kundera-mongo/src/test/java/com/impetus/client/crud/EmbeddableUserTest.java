@@ -95,6 +95,17 @@ public class EmbeddableUserTest
         Assert.assertEquals(1, propertyContainer.getContactName().size());
         Assert.assertEquals("xamry", propertyContainer.getContactName().get(0));
 
+        Assert.assertNotNull(user.getPhones());
+        Assert.assertTrue(user.getPhones().containsKey(AppUser.PhoneKind.PERSONAL));
+        Assert.assertTrue(user.getPhones().containsKey(AppUser.PhoneKind.MOBILE));
+        Assert.assertEquals(user.getPhones().get(AppUser.PhoneKind.PERSONAL), "+1-123-456-7857");
+        Assert.assertEquals(user.getPhones().get(AppUser.PhoneKind.MOBILE), "+5-666-777-9998");
+
+        Assert.assertTrue(user.getPhonePriorities().containsKey(AppUser.PhoneKind.PERSONAL));
+        Assert.assertTrue(user.getPhonePriorities().containsKey(AppUser.PhoneKind.MOBILE));
+        Assert.assertEquals(user.getPhonePriorities().get(AppUser.PhoneKind.PERSONAL), AppUser.PhonePriority.ONLY_EMERGENCY);
+        Assert.assertEquals(user.getPhonePriorities().get(AppUser.PhoneKind.MOBILE), AppUser.PhonePriority.HIGH);
+
     }
 
     @After

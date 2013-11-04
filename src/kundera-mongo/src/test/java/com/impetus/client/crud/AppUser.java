@@ -32,6 +32,20 @@ import javax.persistence.Table;
 @Table(name = "User", schema = "KunderaExamples@mongoTest")
 public class AppUser
 {
+    static enum PhoneKind
+    {
+        PERSONAL,
+        WORK,
+        MOBILE
+    }
+    
+    static enum PhonePriority
+    {
+        ONLY_EMERGENCY,
+        LOW,
+        HIGH
+    }
+    
     @Id
     private String id;
 
@@ -49,6 +63,12 @@ public class AppUser
 
     @Embedded
     private PhoneDirectory phoneDirectory;
+    
+    @Column
+    private Map<PhoneKind, String> phones;
+    
+    @Column
+    private Map<PhoneKind, PhonePriority> phonePriorities;
 
     public AppUser()
     {
@@ -56,11 +76,19 @@ public class AppUser
         propertyKeys = new HashMap<String, String>();
         nickNames = new HashSet<String>();
         friendList = new LinkedList<String>();
+        phones = new HashMap<PhoneKind, String>();
+        phonePriorities = new HashMap<PhoneKind, PhonePriority>();
         tags.add("yo");
         propertyKeys.put("kk", "Kuldeep");
         nickNames.add("kk");
         friendList.add("xamry");
         friendList.add("mevivs");
+
+        phones.put(PhoneKind.PERSONAL, "+1-123-456-7857");
+        phones.put(PhoneKind.MOBILE, "+5-666-777-9998");
+
+        phonePriorities.put(PhoneKind.PERSONAL, PhonePriority.ONLY_EMERGENCY);
+        phonePriorities.put(PhoneKind.MOBILE, PhonePriority.HIGH);
     }
 
     public String getId()
@@ -101,5 +129,15 @@ public class AppUser
     public void setPropertyContainer(PhoneDirectory propertyContainer)
     {
         this.phoneDirectory = propertyContainer;
+    }
+
+    public Map<PhoneKind, String> getPhones()
+    {
+        return phones;
+    }
+
+    public Map<PhoneKind, PhonePriority> getPhonePriorities()
+    {
+        return phonePriorities;
     }
 }
